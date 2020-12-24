@@ -16,7 +16,7 @@ import tempfile
 import subprocess
 
 
-__version__ = '1.2.1'
+__version__ = '1.3.1'
 
 
 PY3 = sys.version_info >= (3,)
@@ -43,6 +43,7 @@ ENV_SHOW_IP = Env('{prefix}_SHOW_IP')
 ENV_SHOW_SPEED = Env('{prefix}_SHOW_SPEED')
 ENV_SAVE_BODY = Env('{prefix}_SAVE_BODY')
 ENV_CURL_BIN = Env('{prefix}_CURL_BIN')
+ENV_METRICS_ONLY = Env('{prefix}_METRICS_ONLY')
 ENV_DEBUG = Env('{prefix}_DEBUG')
 
 
@@ -160,6 +161,7 @@ def main():
     show_speed = 'true'in ENV_SHOW_SPEED.get('false').lower()
     save_body = 'true' in ENV_SAVE_BODY.get('true').lower()
     curl_bin = ENV_CURL_BIN.get('curl')
+    metrics_only = 'true' in ENV_METRICS_ONLY.get('false').lower()
     is_debug = 'true' in ENV_DEBUG.get('false').lower()
 
     # configure logging
@@ -243,9 +245,23 @@ def main():
         print(yellow('Could not decode json: {}'.format(e)))
         print('curl result:', p.returncode, grayscale[16](out), grayscale[16](err))
         quit(None, 1)
+
+    # convert time_ metrics from seconds to milliseconds
     for k in d:
         if k.startswith('time_'):
-            d[k] = int(d[k] * 1000)
+            v = d[k]
+            # Convert time_ values to milliseconds in int
+            if isinstance(v, float):
+                # Before 7.61.0, time values are represented as seconds in float
+                d[k] = int(v * 1000)
+            elif isinstance(v, int):
+                # Starting from 7.61.0, libcurl uses microsecond in int
+                # to return time values, references:
+                # https://daniel.haxx.se/blog/2018/07/11/curl-7-61-0/
+                # https://curl.se/bug/?i=2495
+                d[k] = int(v / 1000)
+            else:
+                raise TypeError('{} value type is invalid: {}'.format(k, type(v)))
 
     # calculate ranges
     d.update(
@@ -255,6 +271,11 @@ def main():
         range_server=d['time_starttransfer'] - d['time_pretransfer'],
         range_transfer=d['time_total'] - d['time_starttransfer'],
     )
+
+    # print json if metrics_only is enabled
+    if metrics_only:
+        print(json.dumps(d, indent=2))
+        quit(None, 0)
 
     # ip
     if show_ip:
